@@ -1,0 +1,449 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>RC Heli Sim - JS City Prototype (FPV HUD)</title>
+    <style>
+        body { margin: 0; overflow: hidden; background-color: #87CEEB; font-family: sans-serif; }
+        /* Style for the main 3D canvas container */
+        #canvasContainer {
+            position: relative; /* Needed for absolute positioning of children */
+            width: 100vw;
+            height: 100vh;
+        }
+        /* Style for the main 3D renderer canvas */
+        #webglCanvas { display: block; position: absolute; top: 0; left: 0; z-index: 1; }
+        /* Style for the HUD overlay canvas */
+        #hudCanvas {
+            display: block; position: absolute; top: 0; left: 0; z-index: 2;
+            pointer-events: none; /* Allow clicks to pass through to the 3D view */
+        }
+
+        /* UI elements styling (Info, Controls Panel etc. - Same as before) */
+        #info { /* ... */ position: absolute; top: 10px; left: 10px; color: white; background-color: rgba(0,0,0,0.6); padding: 8px; border-radius: 5px; font-family: monospace; z-index: 100; min-width: 200px; font-size: 0.9em; }
+        #info hr { /* ... */ border-color: #555; margin: 5px 0;}
+        #info i { /* ... */ color: #ccc; }
+        #controlsPanel { /* ... */ position: absolute; top: 10px; right: 10px; background-color: rgba(0,0,0,0.75); color: white; padding: 15px; border-radius: 8px; z-index: 101; font-family: sans-serif; display: none; border: 1px solid #555; width: 350px; max-height: 90vh; overflow-y: auto; }
+        #controlsPanel h3 { /* ... */ margin-top: 0; text-align: center; border-bottom: 1px solid #666; padding-bottom: 10px; margin-bottom: 15px; }
+        #controlsPanel h4 { /* ... */ margin-top: 15px; margin-bottom: 10px; border-bottom: 1px dashed #555; padding-bottom: 5px; }
+        #controlsPanel div.control-row { /* ... */ margin-bottom: 10px; display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; }
+        #controlsPanel span.label { /* ... */ font-weight: bold; margin-right: 5px; min-width: 110px; display: inline-block;}
+        #controlsPanel strong.keybind { /* ... */ font-family: monospace; background-color: #555; padding: 2px 5px; border-radius: 3px; min-width: 60px; text-align: center; display: inline-block; margin: 0 5px;}
+        #controlsPanel button.changeKey { /* ... */ padding: 3px 8px; cursor: pointer; font-size: 0.9em; }
+        #controlsPanel button.closeBtn { /* ... */ margin-top: 20px; width: 100%; padding: 8px; cursor: pointer; }
+        .listening { /* ... */ background-color: yellow; color: black; }
+        #controlsPanel div.slider-row { /* ... */ margin-bottom: 12px; padding-top: 5px; border-top: 1px solid #444; }
+        #controlsPanel label { /* ... */ display: block; margin-bottom: 3px; font-size: 0.95em; }
+        #controlsPanel input[type=range] { /* ... */ width: calc(100% - 50px); vertical-align: middle; cursor: pointer; }
+        #controlsPanel span.slider-value { /* ... */ display: inline-block; width: 40px; text-align: right; font-family: monospace; font-size: 0.9em; }
+        #openControlsBtn { /* ... */ position: absolute; top: 15px; right: 15px; padding: 8px 12px; cursor: pointer; z-index: 102; background-color: rgba(0,0,0,0.5); color: white; border: 1px solid #ccc; border-radius: 5px; font-size: 0.9em; }
+        #resetInfo { /* ... */ position: absolute; bottom: 10px; left: 10px; color: rgba(255, 255, 255, 0.7); font-size: 0.9em; z-index: 99; }
+        #viewModeInfo { /* ... */ position: absolute; bottom: 10px; right: 10px; color: rgba(255, 255, 255, 0.7); font-size: 0.9em; z-index: 99; background-color: rgba(0,0,0,0.5); padding: 3px 6px; border-radius: 3px; }
+
+        /* --- Splash Screen Styles --- */
+        #splashScreen {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background-color: #1a1a2e; /* Dark blueish background */
+            color: #e0e0e0; /* Light grey text */
+            display: flex;
+            flex-direction: column; /* Stack title and subtitle */
+            justify-content: center;
+            align-items: center;
+            z-index: 999;
+            opacity: 1;
+            transition: opacity 1.0s ease-out;
+            font-family: 'Arial Black', Gadget, sans-serif; /* More impactful font */
+            text-align: center;
+        }
+        #splashScreen h1 {
+            font-size: 4em; /* Larger title */
+            margin-bottom: 10px;
+            text-shadow: 2px 2px 4px rgba(0,0,0,0.5);
+        }
+         #splashScreen p {
+            font-size: 1.5em;
+            color: #a0a0a0; /* Slightly darker subtitle */
+        }
+        #splashScreen.fade-out {
+            opacity: 0;
+            pointer-events: none; /* Allow clicks through after fade */
+        }
+    </style>
+</head>
+<body>
+    <!-- Splash Screen -->
+    <div id="splashScreen">
+        <h1>RC Heli Sim</h1>
+        <p>Loading...</p>
+    </div>
+
+    <!-- Container for Canvases -->
+    <div id="canvasContainer">
+        <canvas id="webglCanvas"></canvas> <!-- Main 3D view -->
+        <canvas id="hudCanvas"></canvas>   <!-- HUD Overlay -->
+    </div>
+
+    <!-- UI Elements -->
+    <div id="info">
+        Alt: <span id="altitude">0.0</span>m | Spd: <span id="speed">0.0</span>m/s<br> <!-- Shortened labels -->
+        <hr>
+        <i>Controls:'C'|Reset:'R'|View:'V'</i>
+    </div>
+    <div id="resetInfo"></div>
+    <div id="viewModeInfo">3rd Person</div>
+    <button id="openControlsBtn">Controls (C)</button>
+    <div id="controlsPanel"> <!-- ... Content same as before ... -->
+        <h3>Configure Controls</h3> <h4>Key Bindings</h4>
+        <div class="control-row" data-action="collectiveUp">   <span class="label">Collective Up:</span>   <strong class="keybind" id="key_collectiveUp">?</strong>   <button class="changeKey" data-action="collectiveUp">Change</button></div>
+        <div class="control-row" data-action="collectiveDown"> <span class="label">Collective Down:</span> <strong class="keybind" id="key_collectiveDown">?</strong> <button class="changeKey" data-action="collectiveDown">Change</button></div>
+        <div class="control-row" data-action="yawLeft">        <span class="label">Yaw Left:</span>        <strong class="keybind" id="key_yawLeft">?</strong>        <button class="changeKey" data-action="yawLeft">Change</button></div>
+        <div class="control-row" data-action="yawRight">       <span class="label">Yaw Right:</span>       <strong class="keybind" id="key_yawRight">?</strong>       <button class="changeKey" data-action="yawRight">Change</button></div>
+        <div class="control-row" data-action="pitchForward">   <span class="label">Pitch Forward:</span>   <strong class="keybind" id="key_pitchForward">?</strong>   <button class="changeKey" data-action="pitchForward">Change</button></div>
+        <div class="control-row" data-action="pitchBackward">  <span class="label">Pitch Backward:</span>  <strong class="keybind" id="key_pitchBackward">?</strong>  <button class="changeKey" data-action="pitchBackward">Change</button></div>
+        <div class="control-row" data-action="rollLeft">       <span class="label">Roll Left:</span>        <strong class="keybind" id="key_rollLeft">?</strong>        <button class="changeKey" data-action="rollLeft">Change</button></div>
+        <div class="control-row" data-action="rollRight">      <span class="label">Roll Right:</span>       <strong class="keybind" id="key_rollRight">?</strong>       <button class="changeKey" data-action="rollRight">Change</button></div>
+        <h4>Sensitivity</h4>
+        <div class="slider-row"> <label for="collectiveSens">Collective:</label> <input type="range" id="collectiveSens" name="collectiveSens" min="0.1" max="2.0" step="0.1"> <span class="slider-value" id="collectiveSensValue">1.0</span> </div>
+        <div class="slider-row"> <label for="yawSens">Yaw:</label> <input type="range" id="yawSens" name="yawSens" min="0.1" max="2.0" step="0.1"> <span class="slider-value" id="yawSensValue">1.0</span> </div>
+        <div class="slider-row"> <label for="pitchSens">Pitch:</label> <input type="range" id="pitchSens" name="pitchSens" min="0.1" max="2.0" step="0.1"> <span class="slider-value" id="pitchSensValue">1.0</span> </div>
+        <div class="slider-row"> <label for="rollSens">Roll:</label> <input type="range" id="rollSens" name="rollSens" min="0.1" max="2.0" step="0.1"> <span class="slider-value" id="rollSensValue">1.0</span> </div>
+        <div class="slider-row"> <label for="gravitySens">Gravity Scale:</label> <input type="range" id="gravitySens" name="gravitySens" min="0.2" max="3.0" step="0.1"> <span class="slider-value" id="gravitySensValue">1.0</span> </div>
+        <button class="closeBtn">Close</button>
+    </div>
+
+    <!-- Import Three.js -->
+    <script type="importmap">{ "imports": { "three": "https://cdn.jsdelivr.net/npm/three@0.164.1/build/three.module.js", "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.164.1/examples/jsm/" } }</script>
+
+    <!-- Main Game Logic -->
+    <script type="module">
+        import * as THREE from 'three';
+
+        // --- Global State ---
+        let isPaused = false; let isListeningForKey = false; let actionToBind = null; let isFPV = false;
+
+        // --- Raycaster ---
+        const raycaster = new THREE.Raycaster(); const downVector = new THREE.Vector3(0, -1, 0);
+
+        // --- Settings ---
+        const settingsKey = 'rcHeliSimSettings_v2';
+        const defaultSettings = { /* ... same default settings ... */ controls: { collectiveUp: 'KeyW', collectiveDown: 'KeyS', yawLeft: 'KeyA', yawRight: 'KeyD', pitchForward: 'ArrowUp', pitchBackward: 'ArrowDown', rollLeft: 'ArrowLeft', rollRight: 'ArrowRight' }, sensitivity: { collective: 1.0, yaw: 1.0, pitch: 1.0, roll: 1.0, gravity: 1.0 } };
+        let currentSettings = JSON.parse(JSON.stringify(defaultSettings));
+
+        // --- Base Physics ---
+        const baseMaxThrust = 15.0; const baseMaxTorque = 0.5; const baseGravityMagnitude = 9.81;
+        const keyState = {};
+
+        // --- Scene Setup ---
+        const scene = new THREE.Scene(); scene.fog = new THREE.Fog(0x87CEEB, 150, 600);
+
+        // --- Cameras ---
+        const thirdPersonCamera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
+        thirdPersonCamera.position.set(0, 50, 80); thirdPersonCamera.lookAt(0, 0, 0);
+        const fpvCamera = new THREE.PerspectiveCamera(70, window.innerWidth / window.innerHeight, 0.1, 800);
+        fpvCamera.position.set(0, 0.3, 0.5); fpvCamera.rotation.set(0, 0, 0);
+        let activeCamera = thirdPersonCamera;
+
+        // --- Renderer and Canvases ---
+        const webglCanvas = document.getElementById('webglCanvas');
+        const hudCanvas = document.getElementById('hudCanvas');
+        const renderer = new THREE.WebGLRenderer({ canvas: webglCanvas, antialias: true }); // Attach to specific canvas
+        renderer.setSize(window.innerWidth, window.innerHeight); renderer.setClearColor(0x87CEEB);
+        renderer.shadowMap.enabled = true;
+        const hudCtx = hudCanvas.getContext('2d');
+
+        // Adjust canvas sizes initially and on resize
+        function resizeCanvases() {
+             const width = window.innerWidth;
+             const height = window.innerHeight;
+             renderer.setSize(width, height);
+             hudCanvas.width = width;
+             hudCanvas.height = height;
+
+             // Update camera aspect ratios
+             const aspect = width / height;
+             thirdPersonCamera.aspect = aspect;
+             thirdPersonCamera.updateProjectionMatrix();
+             fpvCamera.aspect = aspect;
+             fpvCamera.updateProjectionMatrix();
+        }
+        resizeCanvases(); // Initial size setup
+
+
+        // --- Lighting (Same) ---
+        /* ... ambient and directional light ... */
+        const ambientLight = new THREE.AmbientLight(0xcccccc, 0.6); scene.add(ambientLight); const directionalLight = new THREE.DirectionalLight(0xffffff, 1.2); directionalLight.position.set(50, 100, 75); directionalLight.castShadow = true; directionalLight.shadow.mapSize.width = 2048; directionalLight.shadow.mapSize.height = 2048; directionalLight.shadow.camera.far = 500; directionalLight.shadow.camera.left = -150; directionalLight.shadow.camera.right = 150; directionalLight.shadow.camera.top = 150; directionalLight.shadow.camera.bottom = -150; scene.add(directionalLight);
+
+        // --- City Environment (Same) ---
+        const cityObjects = new THREE.Group(); scene.add(cityObjects);
+        /* ... createBuilding, createStreet functions and city population loops ... */
+        const buildingMaterials = [ new THREE.MeshStandardMaterial({ color: 0xaaaaaa }), new THREE.MeshStandardMaterial({ color: 0x888888 }), new THREE.MeshStandardMaterial({ color: 0xbbbbbb }), new THREE.MeshStandardMaterial({ color: 0x777777 })]; const helipadMaterial = new THREE.MeshStandardMaterial({ color: 0xffff00 }); const helipadBaseMaterial = new THREE.MeshStandardMaterial({ color: 0x444444 }); function createBuilding(x, z, width, depth, height, hasHelipad = false, helipadType = '') { const buildingMat = buildingMaterials[Math.floor(Math.random() * buildingMaterials.length)]; const buildingGeom = new THREE.BoxGeometry(width, height, depth); const building = new THREE.Mesh(buildingGeom, buildingMat); building.position.set(x, height / 2, z); building.castShadow = true; building.receiveShadow = true; cityObjects.add(building); if (hasHelipad) { const padSize = Math.min(width, depth) * 0.8; const padBaseGeom = new THREE.BoxGeometry(padSize, 0.5, padSize); const padBase = new THREE.Mesh(padBaseGeom, helipadBaseMaterial); padBase.position.set(x, height + 0.25, z); padBase.castShadow = true; padBase.receiveShadow = true; cityObjects.add(padBase); const letterGeom = new THREE.BoxGeometry(padSize * 0.2, 0.2, padSize * 0.6); const letterMat = new THREE.MeshBasicMaterial({ color: 0xffffff}); const h_bar1 = new THREE.Mesh(letterGeom, letterMat); const h_bar2 = h_bar1.clone(); const h_cross_geom = new THREE.BoxGeometry(padSize * 0.5, 0.2, padSize * 0.2); const h_cross = new THREE.Mesh(h_cross_geom, letterMat); h_bar1.position.set(x - padSize * 0.25, height + 0.6, z); h_bar2.position.set(x + padSize * 0.25, height + 0.6, z); h_cross.position.set(x, height + 0.6, z); cityObjects.add(h_bar1); cityObjects.add(h_bar2); cityObjects.add(h_cross); } return building; } function createStreet(x, z, width, length, rotationY = 0) { const streetGeom = new THREE.PlaneGeometry(width, length); const streetMat = new THREE.MeshStandardMaterial({ color: 0x333333 }); const street = new THREE.Mesh(streetGeom, streetMat); street.rotation.x = -Math.PI / 2; street.rotation.z = rotationY; street.position.set(x, 0.1, z); street.receiveShadow = true; cityObjects.add(street); } const groundGeometry = new THREE.PlaneGeometry(1000, 1000); const groundMaterial = new THREE.MeshStandardMaterial({ color: 0x555555, side: THREE.DoubleSide }); const ground = new THREE.Mesh(groundGeometry, groundMaterial); ground.rotation.x = -Math.PI / 2; ground.receiveShadow = true; cityObjects.add(ground); const citySize = 200; const buildingSpacing = 25; const streetWidth = 15; for (let x = -citySize; x < citySize; x += buildingSpacing + streetWidth) { for (let z = -citySize; z < citySize; z += buildingSpacing + streetWidth) { if (Math.random() > 0.3) { const width = THREE.MathUtils.randFloat(15, buildingSpacing); const depth = THREE.MathUtils.randFloat(15, buildingSpacing); const height = THREE.MathUtils.randFloat(20, 150); createBuilding(x + width / 2, z + depth / 2, width, depth, height); } } } createBuilding(-100, 50, 30, 30, 120, true, "Hospital"); createBuilding(80, -90, 25, 40, 100, true, "TV News"); const airportAreaGeom = new THREE.PlaneGeometry(100, 150); const airportAreaMat = new THREE.MeshStandardMaterial({ color: 0x666666 }); const airportArea = new THREE.Mesh(airportAreaGeom, airportAreaMat); airportArea.rotation.x = -Math.PI / 2; airportArea.position.set(150, 0.1, 150); airportArea.receiveShadow = true; cityObjects.add(airportArea); createBuilding(150, 150, 20, 20, 1, true, "Airport"); for (let x = -citySize - streetWidth/2; x < citySize; x += buildingSpacing + streetWidth) { createStreet(x + (buildingSpacing + streetWidth) / 2 - streetWidth/2, 0, streetWidth, citySize * 2 + streetWidth); } for (let z = -citySize - streetWidth/2; z < citySize; z += buildingSpacing + streetWidth) { createStreet(0, z + (buildingSpacing + streetWidth) / 2 - streetWidth/2, citySize * 2 + streetWidth, streetWidth); }
+
+        // --- Moving Elements (Cars - Same) ---
+        const movingObjects = new THREE.Group(); scene.add(movingObjects); const cars = [];
+        /* ... createCar function and car loop ... */
+         const carMaterial = new THREE.MeshStandardMaterial({ color: 0x0000ff }); const carGeometry = new THREE.BoxGeometry(3, 1.5, 1.5); function createCar(x, z, pathEndX) { const car = new THREE.Mesh(carGeometry, carMaterial); car.position.set(x, 0.75, z); car.castShadow = true; movingObjects.add(car); cars.push({ mesh: car, startX: x, endX: pathEndX, speed: THREE.MathUtils.randFloat(5, 15), direction: 1 }); } for (let i = 0; i < 10; i++) { createCar(THREE.MathUtils.randFloat(-citySize, citySize), -streetWidth, citySize * 1.5); }
+
+        // --- Helicopter Setup (Same) ---
+        const heliGroup = new THREE.Group(); const heliVisuals = new THREE.Group();
+        heliGroup.add(heliVisuals); heliGroup.add(fpvCamera);
+        /* ... Create heli body, boom, rotor meshes and add them to heliVisuals ... */
+        const bodyGeometry = new THREE.BoxGeometry(1, 0.8, 3); const bodyMaterial = new THREE.MeshStandardMaterial({ color: 0xff0000 }); const body = new THREE.Mesh(bodyGeometry, bodyMaterial); body.castShadow = true; heliVisuals.add(body); const tailBoomGeometry = new THREE.CylinderGeometry(0.1, 0.1, 2.5, 8); const tailBoomMaterial = new THREE.MeshStandardMaterial({ color: 0x555555 }); const tailBoom = new THREE.Mesh(tailBoomGeometry, tailBoomMaterial); tailBoom.rotation.x = Math.PI / 2; tailBoom.position.z = -2.75; tailBoom.castShadow = true; heliVisuals.add(tailBoom); const rotorGeometry = new THREE.CylinderGeometry(2.5, 2.5, 0.05, 32); const rotorMaterial = new THREE.MeshStandardMaterial({ color: 0x333333, transparent: true, opacity: 0.5 }); const rotor = new THREE.Mesh(rotorGeometry, rotorMaterial); rotor.position.y = 0.5; heliVisuals.add(rotor);
+        heliGroup.position.set(0, 10, 0); scene.add(heliGroup);
+
+        // Physics state variables
+        const mass = 1.0; const velocity = new THREE.Vector3(0, 0, 0); const angularVelocity = new THREE.Vector3(0, 0, 0);
+        const forces = new THREE.Vector3(0, 0, 0); const torques = new THREE.Vector3(0, 0, 0);
+        let collectiveInput = 0.0; let yawInput = 0.0; let pitchInput = 0.0; let rollInput = 0.0;
+        const euler = new THREE.Euler(0, 0, 0, 'YXZ'); // To get pitch/roll from quaternion
+
+        // --- Input Handling (Same) ---
+        function handleInput() { /* ... same logic using currentSettings.controls ... */ if (isPaused || isListeningForKey) return; let targetCollective = collectiveInput; if (keyState[currentSettings.controls.collectiveUp]) targetCollective = Math.min(collectiveInput + 0.05, 1.0); else if (keyState[currentSettings.controls.collectiveDown]) targetCollective = Math.max(collectiveInput - 0.05, 0.0); else targetCollective = collectiveInput * 0.95; collectiveInput = THREE.MathUtils.lerp(collectiveInput, targetCollective, 0.1); let targetYaw = 0; if (keyState[currentSettings.controls.yawLeft]) targetYaw = 1.0; if (keyState[currentSettings.controls.yawRight]) targetYaw = -1.0; yawInput = THREE.MathUtils.lerp(yawInput, targetYaw, 0.1); let targetPitch = 0; if (keyState[currentSettings.controls.pitchForward]) targetPitch = -1.0; if (keyState[currentSettings.controls.pitchBackward]) targetPitch = 1.0; pitchInput = THREE.MathUtils.lerp(pitchInput, targetPitch, 0.1); let targetRoll = 0; if (keyState[currentSettings.controls.rollLeft]) targetRoll = -1.0; if (keyState[currentSettings.controls.rollRight]) targetRoll = 1.0; rollInput = THREE.MathUtils.lerp(rollInput, targetRoll, 0.1); }
+
+        // --- Simulation Loop ---
+        const clock = new THREE.Clock();
+        function updatePhysics(deltaTime) { /* ... same physics update logic using sensitivity values ... */
+            forces.set(0, 0, 0); torques.set(0, 0, 0);
+            const up = new THREE.Vector3(0, 1, 0).applyQuaternion(heliGroup.quaternion);
+            const forward = new THREE.Vector3(0, 0, -1).applyQuaternion(heliGroup.quaternion);
+            const right = new THREE.Vector3(1, 0, 0).applyQuaternion(heliGroup.quaternion);
+            const currentGravityMagnitude = baseGravityMagnitude * currentSettings.sensitivity.gravity; const gravityForce = new THREE.Vector3(0, -currentGravityMagnitude, 0); forces.addScaledVector(gravityForce, mass);
+            const currentMaxThrust = baseMaxThrust * currentSettings.sensitivity.collective; const thrustForce = up.clone().multiplyScalar(collectiveInput * currentMaxThrust); forces.add(thrustForce);
+            const speedSq = velocity.lengthSq(); const dragMagnitude = speedSq * 0.01; if (dragMagnitude > 0.0001) { const dragForce = velocity.clone().normalize().multiplyScalar(-dragMagnitude); forces.add(dragForce); } const stabilizingTorqueFactor = -0.3; torques.addScaledVector(angularVelocity, stabilizingTorqueFactor);
+            const currentYawTorque = baseMaxTorque * currentSettings.sensitivity.yaw; const currentPitchTorque = baseMaxTorque * currentSettings.sensitivity.pitch; const currentRollTorque = baseMaxTorque * currentSettings.sensitivity.roll; const yawTorque = up.clone().multiplyScalar(yawInput * currentYawTorque); const pitchTorque = right.clone().multiplyScalar(pitchInput * currentPitchTorque); const rollTorque = forward.clone().multiplyScalar(rollInput * currentRollTorque); torques.add(yawTorque).add(pitchTorque).add(rollTorque);
+            const linearAcceleration = forces.clone().divideScalar(mass); velocity.addScaledVector(linearAcceleration, deltaTime); heliGroup.position.addScaledVector(velocity, deltaTime); angularVelocity.addScaledVector(torques, deltaTime);
+            if (angularVelocity.lengthSq() > 0.00001) { const deltaRotation = new THREE.Quaternion().setFromAxisAngle( angularVelocity.clone().normalize(), angularVelocity.length() * deltaTime ); heliGroup.quaternion.multiplyQuaternions(deltaRotation, heliGroup.quaternion); heliGroup.quaternion.normalize(); }
+            if (heliGroup.position.y < 0.8) { heliGroup.position.y = 0.8; velocity.y = Math.max(0, velocity.y * -0.1); angularVelocity.multiplyScalar(0.5); velocity.x *= 0.6; velocity.z *= 0.6;}
+            rotor.rotation.y += collectiveInput * 0.5 + 0.1; // Rotor visual update
+         }
+        function updateMovingElements(deltaTime) { /* ... same car logic ... */ cars.forEach(car => { car.mesh.position.x += car.speed * car.direction * deltaTime; if (car.direction === 1 && car.mesh.position.x > car.endX) { car.direction = -1; car.mesh.rotation.y = Math.PI; } else if (car.direction === -1 && car.mesh.position.x < car.startX) { car.direction = 1; car.mesh.rotation.y = 0; } }); }
+        function updateCamera() { /* ... same 3PV update logic ... */ if (!isFPV) { const offset = new THREE.Vector3(0, 7, 18); const desiredCamPos = heliGroup.position.clone().add(offset.applyQuaternion(heliGroup.quaternion)); thirdPersonCamera.position.lerp(desiredCamPos, 0.08); const lookAtPos = heliGroup.position.clone().add(velocity.clone().multiplyScalar(0.1)); thirdPersonCamera.lookAt(lookAtPos); } }
+        function updateUI() { /* ... same altitude/speed update ... */ document.getElementById('altitude').textContent = heliGroup.position.y.toFixed(1); document.getElementById('speed').textContent = velocity.length().toFixed(1); }
+
+        // --- FPV HUD Drawing Function ---
+        function updateHUD(ctx, width, height) {
+            ctx.clearRect(0, 0, width, height); // Clear previous frame
+
+            if (!isFPV || isPaused) return; // Only draw in FPV and when not paused
+
+            // --- Style settings ---
+            const hudColor = 'rgba(0, 255, 255, 0.8)'; // Light Cyan HUD
+            const skyColor = 'rgba(135, 206, 250, 0.3)'; // Semi-transparent sky blue
+            const groundColor = 'rgba(139, 69, 19, 0.4)'; // Semi-transparent brown
+            const fontSize = Math.max(14, width * 0.015); // Responsive font size
+            ctx.strokeStyle = hudColor;
+            ctx.fillStyle = hudColor;
+            ctx.lineWidth = 2;
+            ctx.font = `bold ${fontSize}px monospace`;
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+
+            // --- Get Orientation ---
+            euler.setFromQuaternion(heliGroup.quaternion, 'YXZ'); // Use YXZ order for pitch/roll
+            const pitchRad = euler.x; // Pitch around X axis
+            const rollRad = euler.z;  // Roll around Z axis (forward axis in THREE's default)
+
+            // --- Center coordinates ---
+            const centerX = width / 2;
+            const centerY = height / 2;
+
+            // --- Artificial Horizon ---
+            ctx.save(); // Save context state before transformations
+            ctx.translate(centerX, centerY); // Move origin to center
+            ctx.rotate(-rollRad); // Rotate canvas opposite to heli roll
+
+            // Calculate vertical offset based on pitch (pixels per radian or degree)
+            const pixelsPerRadianPitch = height * 0.6; // Adjust sensitivity
+            const pitchOffset = pitchRad * pixelsPerRadianPitch;
+
+            // Draw Sky/Ground Rects (clip to avoid drawing over whole screen if needed)
+            const horizonWidth = width * 1.5; // Wider than screen to handle roll
+            ctx.fillStyle = groundColor;
+            ctx.fillRect(-horizonWidth / 2, pitchOffset, horizonWidth, height); // Ground below horizon line
+            ctx.fillStyle = skyColor;
+            ctx.fillRect(-horizonWidth / 2, -height, horizonWidth, height + pitchOffset); // Sky above horizon line
+
+            // Draw Horizon Line
+            ctx.beginPath();
+            ctx.moveTo(-horizonWidth / 2, pitchOffset);
+            ctx.lineTo(horizonWidth / 2, pitchOffset);
+            ctx.stroke();
+
+            // Draw Pitch Ladder (simple example)
+            const pitchLineSpacing = pixelsPerRadianPitch * THREE.MathUtils.degToRad(5); // Lines every 5 degrees
+            const pitchLineWidth = width * 0.08;
+            ctx.font = `bold ${fontSize * 0.8}px monospace`; // Smaller font for ladder
+            ctx.textAlign = 'left';
+            for (let i = -6; i <= 6; i++) { // Draw lines from -30 to +30 deg approx
+                if (i === 0) continue; // Skip horizon line itself
+                const lineY = pitchOffset - i * pitchLineSpacing;
+                const currentLineWidth = (i % 2 === 0) ? pitchLineWidth : pitchLineWidth * 0.6; // Longer lines every 10 deg
+                ctx.beginPath();
+                ctx.moveTo(-currentLineWidth / 2, lineY);
+                ctx.lineTo(currentLineWidth / 2, lineY);
+                ctx.stroke();
+                // Add degree numbers (optional)
+                 if (i % 2 === 0) {
+                     ctx.fillText(Math.abs(i * 5).toString(), currentLineWidth / 2 + 5, lineY);
+                     ctx.fillText(Math.abs(i * 5).toString(), -currentLineWidth / 2 - 25, lineY);
+                 }
+            }
+
+            ctx.restore(); // Restore context state (removes rotation/translation)
+
+            // --- Fixed Aircraft Symbol ---
+            // Simple crosshair style
+            const symbolSize = width * 0.03;
+            ctx.beginPath();
+            ctx.moveTo(centerX - symbolSize / 2, centerY);
+            ctx.lineTo(centerX + symbolSize / 2, centerY);
+            ctx.moveTo(centerX, centerY - symbolSize / 2);
+            ctx.lineTo(centerX, centerY + symbolSize / 2);
+            // Small wings
+            ctx.moveTo(centerX - symbolSize * 0.8, centerY + symbolSize * 0.1);
+            ctx.lineTo(centerX - symbolSize / 2, centerY);
+            ctx.moveTo(centerX + symbolSize * 0.8, centerY + symbolSize * 0.1);
+            ctx.lineTo(centerX + symbolSize / 2, centerY);
+
+            ctx.stroke();
+
+
+            // --- Throttle Indicator ---
+            ctx.textAlign = 'left';
+            ctx.textBaseline = 'top';
+            const throttlePercent = (collectiveInput * 100).toFixed(0);
+            const throttleY = height - 40; // Position near bottom
+            ctx.fillText(`THR: ${throttlePercent}%`, 20, throttleY);
+            // Optional throttle bar
+            const barW = 15; const barH = 80;
+            const barX = 20; const barY = throttleY - barH - 5; // Position bar above text
+            ctx.strokeStyle = hudColor;
+            ctx.fillStyle = 'rgba(0, 255, 255, 0.3)'; // Use cyan for fill too
+            ctx.strokeRect(barX, barY, barW, barH);
+            ctx.fillRect(barX, barY + barH * (1 - collectiveInput), barW, barH * collectiveInput);
+
+
+            // --- Vertical Speed Indicator ---
+            ctx.textAlign = 'right';
+            const verticalSpeed = velocity.y.toFixed(1);
+            ctx.fillText(`VSI: ${verticalSpeed}m/s`, width - 20, height - 70); // Position higher to avoid overlap with viewModeInfo
+             // Optional VSI bar/indicator could be added here
+
+             // --- Roll Indicator (Simple Arc at top) ---
+             ctx.save();
+             ctx.translate(centerX, centerY * 0.3); // Position near top center
+             const rollIndicatorRadius = width * 0.15;
+             const maxRollAngleDisplay = THREE.MathUtils.degToRad(60); // Show +/- 60 degrees
+
+             // Draw arc background
+             ctx.beginPath();
+             ctx.arc(0, 0, rollIndicatorRadius, Math.PI - maxRollAngleDisplay, 0 + maxRollAngleDisplay); // Bottom semi-circle-ish
+             ctx.strokeStyle = 'rgba(0, 255, 0, 0.4)';
+             ctx.stroke();
+
+             // Draw ticks
+              ctx.lineWidth = 1;
+              ctx.font = `bold ${fontSize * 0.7}px monospace`;
+              ctx.textAlign = 'center';
+              ctx.textBaseline = 'bottom';
+             for(let deg = -60; deg <= 60; deg+=15) {
+                 const angleRad = THREE.MathUtils.degToRad(deg);
+                 if(Math.abs(angleRad) > maxRollAngleDisplay) continue;
+                 const tickX = Math.sin(angleRad) * rollIndicatorRadius;
+                 const tickY = -Math.cos(angleRad) * rollIndicatorRadius; // Use negative cos for top arc
+                 const tickLen = (deg % 30 === 0) ? 8 : 5; // Longer ticks every 30 deg
+                 ctx.beginPath();
+                 ctx.moveTo(tickX, tickY);
+                 ctx.lineTo(tickX, tickY - tickLen);
+                 ctx.stroke();
+                  if (deg % 30 === 0 && deg !== 0) {
+                     ctx.fillText(Math.abs(deg).toString(), tickX, tickY - tickLen - 2);
+                 }
+             }
+
+             // Draw roll pointer needle (rotating opposite to roll)
+              ctx.rotate(rollRad); // Rotate the needle itself
+              ctx.beginPath();
+              ctx.moveTo(0, -rollIndicatorRadius + 3);
+              ctx.lineTo(0, -rollIndicatorRadius - 8); // Pointy needle
+              ctx.moveTo(-4, -rollIndicatorRadius + 3); // Base of needle
+              ctx.lineTo(4, -rollIndicatorRadius + 3);
+              ctx.lineWidth = 2;
+              ctx.strokeStyle = hudColor; // Ensure needle is bright
+              ctx.stroke();
+
+
+             ctx.restore();
+
+        }
+
+
+        // --- Helicopter Reset Function (Same) ---
+        function resetHelicopter() { /* ... same reset logic ... */ console.log("Reset triggered"); const resetInfoEl = document.getElementById('resetInfo'); resetInfoEl.textContent = "Resetting..."; const checkPos = heliGroup.position.clone(); checkPos.y = 100; raycaster.set(checkPos, downVector); const intersects = raycaster.intersectObjects(cityObjects.children, true); let groundY = 0.5; if (intersects.length > 0) { const groundHit = intersects.sort((a, b) => b.point.y - a.point.y)[0]; groundY = groundHit.point.y + 1.0; } else { console.warn("Raycast didn't hit ground/building, using default height.");} groundY = Math.max(groundY, 0.8); heliGroup.position.set(heliGroup.position.x, groundY, heliGroup.position.z); heliGroup.quaternion.identity(); velocity.set(0, 0, 0); angularVelocity.set(0, 0, 0); collectiveInput = 0.0; yawInput = 0.0; pitchInput = 0.0; rollInput = 0.0; for (const key in keyState) { keyState[key] = false; } resetInfoEl.textContent = "Reset Complete."; setTimeout(() => { resetInfoEl.textContent = ""; }, 2000); }
+
+        // --- Control Configuration Logic (Same) ---
+        /* ... loadSettings, saveSettings, updateControlPanelUI, startListening, handleKeyBind ... */
+        const controlsPanel = document.getElementById('controlsPanel'); const openControlsBtn = document.getElementById('openControlsBtn'); const changeKeyButtons = document.querySelectorAll('.changeKey'); const closePanelBtn = controlsPanel.querySelector('.closeBtn'); const collectiveSlider = document.getElementById('collectiveSens'); const yawSlider = document.getElementById('yawSens'); const pitchSlider = document.getElementById('pitchSens'); const rollSlider = document.getElementById('rollSens'); const gravitySlider = document.getElementById('gravitySens'); const collectiveValueSpan = document.getElementById('collectiveSensValue'); const yawValueSpan = document.getElementById('yawSensValue'); const pitchValueSpan = document.getElementById('pitchSensValue'); const rollValueSpan = document.getElementById('rollSensValue'); const gravityValueSpan = document.getElementById('gravitySensValue');
+        function loadSettings() { const savedSettings = localStorage.getItem(settingsKey); if (savedSettings) { try { const parsed = JSON.parse(savedSettings); currentSettings = { controls: { ...defaultSettings.controls, ...(parsed.controls || {}) }, sensitivity: { ...defaultSettings.sensitivity, ...(parsed.sensitivity || {}) } }; } catch (e) { console.error("Failed to parse saved settings, using defaults.", e); currentSettings = JSON.parse(JSON.stringify(defaultSettings)); } } else { currentSettings = JSON.parse(JSON.stringify(defaultSettings)); } console.log("Settings loaded:", currentSettings); updateControlPanelUI(); }
+        function saveSettings() { try { localStorage.setItem(settingsKey, JSON.stringify(currentSettings)); } catch (e) { console.error("Failed to save settings to localStorage.", e); } }
+        function displayKey(keyCode) { if (keyCode.startsWith('Key')) return keyCode.substring(3); if (keyCode.startsWith('Digit')) return keyCode.substring(5); if (keyCode.startsWith('Arrow')) return keyCode.substring(5); if (keyCode === 'Space') return 'Spacebar'; return keyCode; }
+        function updateControlPanelUI() { for (const action in currentSettings.controls) { const element = document.getElementById(`key_${action}`); if (element) { element.textContent = displayKey(currentSettings.controls[action]); } const button = controlsPanel.querySelector(`button[data-action="${action}"]`); if (button && button.classList.contains('listening')) { button.classList.remove('listening'); button.textContent = 'Change'; } } collectiveSlider.value = currentSettings.sensitivity.collective; collectiveValueSpan.textContent = parseFloat(collectiveSlider.value).toFixed(1); yawSlider.value = currentSettings.sensitivity.yaw; yawValueSpan.textContent = parseFloat(yawSlider.value).toFixed(1); pitchSlider.value = currentSettings.sensitivity.pitch; pitchValueSpan.textContent = parseFloat(pitchSlider.value).toFixed(1); rollSlider.value = currentSettings.sensitivity.roll; rollValueSpan.textContent = parseFloat(rollSlider.value).toFixed(1); gravitySlider.value = currentSettings.sensitivity.gravity; gravityValueSpan.textContent = parseFloat(gravitySlider.value).toFixed(1); isListeningForKey = false; actionToBind = null; }
+        function startListening(action) { if (isListeningForKey) return; actionToBind = action; isListeningForKey = true; const button = controlsPanel.querySelector(`button[data-action="${action}"]`); button.textContent = 'Press key...'; button.classList.add('listening'); window.addEventListener('keydown', handleKeyBind, { once: true }); }
+        function handleKeyBind(event) { if (!isListeningForKey || !actionToBind) return; if (['Shift', 'Control', 'Alt', 'Meta', 'Escape'].includes(event.key)) { isListeningForKey = false; actionToBind = null; updateControlPanelUI(); return; } event.preventDefault(); const newKeyCode = event.code; isListeningForKey = false; currentSettings.controls[actionToBind] = newKeyCode; saveSettings(); updateControlPanelUI(); actionToBind = null; }
+
+
+        // --- Camera Toggle (Same) ---
+        function toggleCameraView() { /* ... same logic ... */ isFPV = !isFPV; if (isFPV) { activeCamera = fpvCamera; heliVisuals.visible = false; document.getElementById('viewModeInfo').textContent = "FPV Cockpit"; } else { activeCamera = thirdPersonCamera; heliVisuals.visible = true; document.getElementById('viewModeInfo').textContent = "3rd Person"; } activeCamera.aspect = window.innerWidth / window.innerHeight; activeCamera.updateProjectionMatrix(); }
+
+        // --- Event Listeners Setup (Same) ---
+        function setupEventListeners() { /* ... same listeners, including 'V' for toggleCameraView ... */ window.addEventListener('keydown', (event) => { if (!isListeningForKey) { keyState[event.code] = true; if (event.code === 'KeyC' && !event.repeat) { toggleControlsPanel(); } if (event.code === 'KeyR' && !event.repeat && !isPaused) { resetHelicopter(); } if (event.code === 'KeyV' && !event.repeat && !isPaused) { toggleCameraView(); } } }); window.addEventListener('keyup', (event) => { if (!isListeningForKey) { keyState[event.code] = false; } }); window.addEventListener('blur', () => { for (const key in keyState) { keyState[key] = false; } isPaused = true; }); window.addEventListener('focus', () => { isPaused = document.getElementById('controlsPanel').style.display === 'block'; }); openControlsBtn.addEventListener('click', toggleControlsPanel); closePanelBtn.addEventListener('click', toggleControlsPanel); changeKeyButtons.forEach(button => { button.addEventListener('click', (event) => { startListening(event.target.dataset.action); }); }); collectiveSlider.addEventListener('input', (e) => { currentSettings.sensitivity.collective = parseFloat(e.target.value); collectiveValueSpan.textContent = currentSettings.sensitivity.collective.toFixed(1); saveSettings(); }); yawSlider.addEventListener('input', (e) => { currentSettings.sensitivity.yaw = parseFloat(e.target.value); yawValueSpan.textContent = currentSettings.sensitivity.yaw.toFixed(1); saveSettings(); }); pitchSlider.addEventListener('input', (e) => { currentSettings.sensitivity.pitch = parseFloat(e.target.value); pitchValueSpan.textContent = currentSettings.sensitivity.pitch.toFixed(1); saveSettings(); }); rollSlider.addEventListener('input', (e) => { currentSettings.sensitivity.roll = parseFloat(e.target.value); rollValueSpan.textContent = currentSettings.sensitivity.roll.toFixed(1); saveSettings(); }); gravitySlider.addEventListener('input', (e) => { currentSettings.sensitivity.gravity = parseFloat(e.target.value); gravityValueSpan.textContent = currentSettings.sensitivity.gravity.toFixed(1); saveSettings(); }); }
+        function toggleControlsPanel() { /* ... same logic ... */ const panelVisible = controlsPanel.style.display === 'block'; if (panelVisible) { controlsPanel.style.display = 'none'; openControlsBtn.style.display = 'block'; isPaused = false; if (isListeningForKey) { window.removeEventListener('keydown', handleKeyBind); isListeningForKey = false; actionToBind = null; updateControlPanelUI(); } } else { loadSettings(); controlsPanel.style.display = 'block'; openControlsBtn.style.display = 'none'; isPaused = true; collectiveInput = 0; yawInput = 0; pitchInput = 0; rollInput = 0; } }
+
+
+        // --- Render Loop ---
+        function animate() {
+            requestAnimationFrame(animate);
+            const deltaTime = Math.min(clock.getDelta(), 0.1);
+
+            if (!isPaused) {
+                handleInput();
+                updatePhysics(deltaTime);
+                updateMovingElements(deltaTime);
+                updateCamera();
+                updateUI();
+            }
+
+            // Update HUD after physics and camera updates
+            updateHUD(hudCtx, hudCanvas.width, hudCanvas.height); // NEW CALL
+
+            renderer.render(scene, activeCamera);
+        }
+
+        // Handle window resize
+        window.addEventListener('resize', resizeCanvases, false); // Use resizeCanvases function
+
+        // --- Initial Load ---
+        loadSettings();
+        setupEventListeners();
+
+        // --- Splash Screen Logic ---
+        const splashScreen = document.getElementById('splashScreen');
+        if (splashScreen) {
+            setTimeout(() => {
+                splashScreen.classList.add('fade-out');
+                // Optional: Remove from layout after transition
+                setTimeout(() => {
+                    if (splashScreen) splashScreen.style.display = 'none';
+                }, 1000); // Match CSS transition duration (1.0s)
+            }, 2500); // Show splash for 2.5 seconds
+        }
+
+        animate(); // Start the main animation loop
+
+    </script>
+</body>
+</html>
